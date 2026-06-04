@@ -23,6 +23,12 @@
 | 最大回撤 | **-18.4%** | -56.7% |
 | Calmar | **0.636** | 0.16 |
 
+### 權益曲線
+
+![RSRS Market Timing Strategy — Equity Curve](docs/final_equity_curve.png)
+
+![Drawdown Comparison](docs/final_drawdown.png)
+
 ## 快速開始
 
 ```bash

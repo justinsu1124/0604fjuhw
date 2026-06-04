@@ -79,6 +79,12 @@ signal = beta_z × R² × β
 | **賣出門檻** | `signal < -0.8`（不對稱） | 讓利潤跑得更久 |
 | **交易成本** | 5 bps 單邊 | — |
 
+### 權益曲線
+
+![RSRS Market Timing Strategy — Equity Curve](docs/final_equity_curve.png)
+
+![Drawdown Comparison](docs/final_drawdown.png)
+
 ### 為什麼是這組？
 
 1. **R² > 0.9**：將 MaxDD 從 -26.5% 降至 -22.8%，Sharpe 從 0.853 提升至 0.876
@@ -207,6 +213,12 @@ signal = beta_z × R² × β
 | **+ R²>0.9 + Vol>SMA50 + 0.7/-0.8** | **0.961** | **-18.4%** | **0.636** | **1027%** |
 
 每一層優化都帶來可量化的改善：Sharpe +12.7%、MaxDD 改善 30%、Calmar +59%。
+
+### 權益曲線與回撤
+
+![Equity Curve](docs/final_equity_curve.png)
+
+![Drawdown](docs/final_drawdown.png)
 
 ---
 
