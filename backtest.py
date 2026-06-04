@@ -217,6 +217,12 @@ def _compute_daily_equity(
     bt["tc"] = delta.fillna(0) * tc_rate
 
     bt["strategy_ret"] = bt["position"] * bt["market_ret"] - bt["tc"]
+
+    # Trim to start from first valid signal (after warmup)
+    first_valid = bt["signal"].first_valid_index()
+    if first_valid is not None:
+        bt = bt.loc[first_valid:]
+
     bt["equity_market"] = (1 + bt["market_ret"].fillna(0)).cumprod()
     bt["equity_strategy"] = (1 + bt["strategy_ret"].fillna(0)).cumprod()
 
