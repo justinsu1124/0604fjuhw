@@ -34,8 +34,15 @@ class RSRSIndicator(Indicator):
 
         self.beta: float = 0.0
         self.rsquare: float = 0.0
+        self.tvalue: float = 0.0
         self.beta_z: float = 0.0
         self.signal_value: float = 0.0
+        self.signal_standard: float = 0.0
+        self.signal_r2adj: float = 0.0
+        self.signal_tvalue_adj: float = 0.0
+        self.signal_tvalue_right: float = 0.0
+        self._tvalue_sum: float = 0.0
+        self._tvalue_count: int = 0
 
     @property
     def warmup_period(self) -> int:
@@ -69,6 +76,16 @@ class RSRSIndicator(Indicator):
         ss_tot = np.sum((h - np.mean(h)) ** 2)
         self.rsquare = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
 
+        # t-statistic of beta
+        n = len(h)
+        mse = ss_res / max(n - 2, 1)
+        x_mean = low_arr.mean()
+        sx2 = np.sum((low_arr - x_mean) ** 2)
+        se_beta = np.sqrt(mse / sx2) if sx2 > 1e-12 else 1e-12
+        self.tvalue = self.beta / se_beta if se_beta > 1e-12 else 0.0
+        self._tvalue_sum += self.tvalue
+        self._tvalue_count += 1
+
         self._betas.append(self.beta)
 
         if len(self._betas) >= self.zscore_window:
@@ -76,7 +93,12 @@ class RSRSIndicator(Indicator):
             mean_b = betas_arr.mean()
             std_b = betas_arr.std(ddof=1)
             self.beta_z = (self.beta - mean_b) / std_b if std_b > 1e-12 else 0.0
+            self.signal_standard = self.beta_z
+            self.signal_r2adj = self.beta_z * self.rsquare
             self.signal_value = self.beta_z * self.rsquare * self.beta
+            t_mean = self._tvalue_sum / max(self._tvalue_count, 1)
+            self.signal_tvalue_adj = (self.tvalue * self.beta_z) / t_mean if t_mean > 1e-12 else 0.0
+            self.signal_tvalue_right = (self.tvalue * self.beta_z * self.beta) / t_mean if t_mean > 1e-12 else 0.0
 
             if not self.initialized:
                 self._set_initialized(True)
@@ -88,5 +110,12 @@ class RSRSIndicator(Indicator):
         self._count = 0
         self.beta = 0.0
         self.rsquare = 0.0
+        self.tvalue = 0.0
         self.beta_z = 0.0
         self.signal_value = 0.0
+        self.signal_standard = 0.0
+        self.signal_r2adj = 0.0
+        self.signal_tvalue_adj = 0.0
+        self.signal_tvalue_right = 0.0
+        self._tvalue_sum = 0.0
+        self._tvalue_count = 0
