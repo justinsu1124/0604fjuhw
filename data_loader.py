@@ -15,30 +15,54 @@ from nautilus_trader.model.objects import Price, Quantity
 FMP_BASE = "https://financialmodelingprep.com/stable"
 
 
+def _fetch_fmp_chunk(
+    symbol: str,
+    start: str,
+    end: str | None,
+    api_key: str,
+) -> list[dict]:
+    """Fetch a single chunk (up to 5000 rows) from FMP."""
+    url = f"{FMP_BASE}/historical-price-eod/full"
+    params: dict[str, str] = {"symbol": symbol, "from": start, "apikey": api_key}
+    if end:
+        params["to"] = end
+    resp = requests.get(url, params=params, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data or not isinstance(data, list):
+        return []
+    return data
+
+
 def fetch_fmp_daily(
     symbol: str,
     start: str = "2000-01-01",
     end: str | None = None,
     api_key: str | None = None,
 ) -> pd.DataFrame:
-    """Fetch daily OHLCV from FMP and return a sorted DataFrame."""
+    """Fetch daily OHLCV from FMP, auto-paginating if > 5000 rows."""
     key = api_key or os.environ.get("FMP_API_KEY", "")
     if not key:
         raise RuntimeError("FMP_API_KEY not set")
 
-    url = f"{FMP_BASE}/historical-price-eod/full"
-    params: dict[str, str] = {"symbol": symbol, "from": start, "apikey": key}
-    if end:
-        params["to"] = end
+    all_data = _fetch_fmp_chunk(symbol, start, end, key)
+    if not all_data:
+        raise ValueError(f"No historical data for {symbol}")
 
-    resp = requests.get(url, params=params, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
+    # FMP returns max 5000 rows; paginate if needed
+    while len(all_data) % 5000 == 0:
+        dates = [d["date"] for d in all_data]
+        earliest = min(dates)
+        chunk = _fetch_fmp_chunk(symbol, start, earliest, key)
+        if not chunk:
+            break
+        existing_dates = set(dates)
+        new_rows = [r for r in chunk if r["date"] not in existing_dates]
+        if not new_rows:
+            break
+        all_data.extend(new_rows)
 
-    if not data or not isinstance(data, list):
-        raise ValueError(f"No historical data for {symbol}: {data}")
-
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(all_data)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
     return df

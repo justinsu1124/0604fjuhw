@@ -1,9 +1,9 @@
-"""RSRS timing strategy for NautilusTrader with volume/MA confirmation.
+"""RSRS timing strategy for NautilusTrader.
 
 Logic
 -----
 - Compute right-skewed RSRS signal each bar.
-- Buy when  signal > buy_threshold  **and** volume > SMA(volume, vol_ma_period).
+- Buy when  signal > buy_threshold  (optionally require volume > SMA).
 - Sell when signal < sell_threshold.
 - Hold previous position otherwise.
 - Long only, no short.
@@ -37,6 +37,7 @@ class RSRSStrategyConfig(StrategyConfig, frozen=True):
     trade_size: int = 100
     vol_ma_period: int = 20
     use_full_capital: bool = False
+    use_volume_filter: bool = True
 
 
 class RSRSStrategy(Strategy):
@@ -48,6 +49,7 @@ class RSRSStrategy(Strategy):
         self.instrument_id = InstrumentId.from_str(config.instrument_id_str)
         self.trade_size = config.trade_size
         self.use_full_capital = config.use_full_capital
+        self.use_volume_filter = config.use_volume_filter
         self._current_qty: int = 0
 
         self.buy_threshold = config.buy_threshold
@@ -83,8 +85,11 @@ class RSRSStrategy(Strategy):
 
         signal = self.rsrs.signal_value
 
-        vol_ma = np.mean(self._volumes) if len(self._volumes) == self.vol_ma_period else None
-        vol_confirmed = vol_ma is not None and vol > vol_ma
+        if self.use_volume_filter:
+            vol_ma = np.mean(self._volumes) if len(self._volumes) == self.vol_ma_period else None
+            vol_confirmed = vol_ma is not None and vol > vol_ma
+        else:
+            vol_confirmed = True
 
         if signal > self.buy_threshold and vol_confirmed and not self._is_long:
             self._enter_long()

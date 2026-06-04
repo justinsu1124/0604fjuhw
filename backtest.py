@@ -99,6 +99,7 @@ def run_backtest(
     vol_ma_period: int = 20,
     trade_size: int = 100,
     use_full_capital: bool = False,
+    use_volume_filter: bool = True,
 ) -> None:
     print(f"[1/4] Fetching SPY daily data from FMP (from {start}) ...")
     df = fetch_fmp_daily("SPY", start=start, end=end)
@@ -120,6 +121,7 @@ def run_backtest(
         trade_size=trade_size,
         vol_ma_period=vol_ma_period,
         use_full_capital=use_full_capital,
+        use_volume_filter=use_volume_filter,
     )
     strategy = RSRSStrategy(config=config)
     engine.add_strategy(strategy)
@@ -135,7 +137,7 @@ def run_backtest(
     n_pos = len(positions) if positions is not None else 0
     print(f"       Fills: {n_fills}  |  Positions: {n_pos}")
 
-    _report_and_plot(engine, df, strategy)
+    _report_and_plot(engine, df, strategy, ols_window, zscore_window, buy_threshold, sell_threshold)
     engine.dispose()
 
 
@@ -143,6 +145,10 @@ def _report_and_plot(
     engine: BacktestEngine,
     df: pd.DataFrame,
     strategy: RSRSStrategy,
+    ols_window: int = 18,
+    zscore_window: int = 1100,
+    buy_threshold: float = 0.7,
+    sell_threshold: float = -0.7,
 ) -> None:
     account = engine.trader.generate_account_report(Venue("XNAS"))
     if account is not None and len(account) > 0:
@@ -159,23 +165,120 @@ def _report_and_plot(
         positions.to_csv(RESULTS_DIR / "positions.csv")
         print(f"Positions saved to {RESULTS_DIR / 'positions.csv'}")
 
-    _plot_equity(df)
+    _plot_equity(df, ols_window, zscore_window, buy_threshold, sell_threshold)
 
 
-def _plot_equity(df: pd.DataFrame) -> None:
-    """Plot buy-and-hold equity from the raw price data as a reference."""
-    close = df.set_index("date")["close"]
-    bh_equity = close / close.iloc[0]
+def _compute_daily_equity(
+    df: pd.DataFrame,
+    ols_window: int,
+    zscore_window: int,
+    buy_threshold: float,
+    sell_threshold: float,
+) -> pd.DataFrame:
+    """Compute daily mark-to-market equity using the same logic as the reference notebook.
 
-    fig, ax = plt.subplots(figsize=(14, 6))
-    bh_equity.plot(ax=ax, label="SPY Buy & Hold", alpha=0.8)
-    ax.set_title("RSRS Strategy — SPY Buy & Hold Reference")
-    ax.set_ylabel("Growth of $1")
-    ax.legend()
+    Returns a DataFrame with columns: signal, position, equity_market, equity_strategy.
+    Uses open-to-open returns with 1-day implementation lag and 5 bps transaction cost.
+    """
+    from rsrs_indicator import RSRSIndicator
+
+    df_p = df.set_index("date").sort_index()
+
+    rsrs = RSRSIndicator(ols_window=ols_window, zscore_window=zscore_window)
+    signals = []
+    for _, row in df_p.iterrows():
+        rsrs.update_raw(float(row["high"]), float(row["low"]))
+        signals.append(rsrs.signal_value if rsrs.initialized else float("nan"))
+
+    bt = pd.DataFrame({"signal": signals}, index=df_p.index)
+
+    pos = []
+    prev = 0
+    for s in bt["signal"]:
+        if pd.isna(s):
+            pos.append(prev)
+        elif s > buy_threshold:
+            prev = 1
+            pos.append(prev)
+        elif s < sell_threshold:
+            prev = 0
+            pos.append(prev)
+        else:
+            pos.append(prev)
+    bt["position"] = pos
+    bt["position"] = bt["position"].shift(1).fillna(0)  # 1-day lag
+
+    daily_ret = df_p["open"].pct_change()
+    bt["market_ret"] = daily_ret
+
+    tc_rate = 5 / 10_000  # 5 bps
+    delta = bt["position"].diff().abs()
+    delta.iloc[0] = abs(bt["position"].iloc[0])
+    bt["tc"] = delta.fillna(0) * tc_rate
+
+    bt["strategy_ret"] = bt["position"] * bt["market_ret"] - bt["tc"]
+    bt["equity_market"] = (1 + bt["market_ret"].fillna(0)).cumprod()
+    bt["equity_strategy"] = (1 + bt["strategy_ret"].fillna(0)).cumprod()
+
+    return bt.dropna(subset=["market_ret"])
+
+
+def _plot_equity(
+    df: pd.DataFrame,
+    ols_window: int = 18,
+    zscore_window: int = 1100,
+    buy_threshold: float = 0.7,
+    sell_threshold: float = -0.7,
+) -> None:
+    """Generate 2-panel chart matching the reference notebook format."""
+    bt = _compute_daily_equity(df, ols_window, zscore_window, buy_threshold, sell_threshold)
+
+    # --- Performance stats ---
+    eq_strat = bt["equity_strategy"]
+    eq_mkt = bt["equity_market"]
+
+    def _stats(eq: pd.Series) -> dict:
+        rets = eq.pct_change().dropna()
+        n = len(rets)
+        if n < 2:
+            return {}
+        total = eq.iloc[-1] / eq.iloc[0] - 1
+        ann = (1 + total) ** (252 / n) - 1
+        vol = rets.std() * np.sqrt(252)
+        sharpe = ann / vol if vol > 0 else float("nan")
+        dd = eq / eq.cummax() - 1
+        maxdd = dd.min()
+        calmar = ann / abs(maxdd) if maxdd < 0 else float("nan")
+        return {"Total": total, "Ann ret": ann, "Ann vol": vol, "Sharpe": sharpe, "MaxDD": maxdd, "Calmar": calmar}
+
+    s_strat = _stats(eq_strat)
+    s_mkt = _stats(eq_mkt)
+    print("\n=== Daily Mark-to-Market Performance ===")
+    print(f"{'':20s} {'RSRS':>12s} {'Buy&Hold':>12s}")
+    for k in s_strat:
+        print(f"  {k:18s} {s_strat[k]:12.4f} {s_mkt.get(k, 0):12.4f}")
+
+    # --- 2-panel chart (matching notebook) ---
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    bt[["equity_market", "equity_strategy"]].plot(
+        ax=axes[0], title="Cumulative equity: SPY vs RSRS timing",
+    )
+    axes[0].set_ylabel("Growth of $1")
+    axes[0].legend(["SPY buy & hold", "RSRS right-skew"])
+
+    bt["signal"].plot(ax=axes[1], color="tab:orange", alpha=0.8, label="Signal")
+    axes[1].axhline(buy_threshold, color="green", ls="--", lw=1, label="Buy threshold")
+    axes[1].axhline(sell_threshold, color="red", ls="--", lw=1, label="Sell threshold")
+    bt["position"].plot(ax=axes[1], color="tab:blue", alpha=0.4, label="Position")
+    axes[1].set_title("Right-skewed RSRS signal and position")
+    axes[1].legend(loc="upper left")
+
     plt.tight_layout()
-    fig.savefig(RESULTS_DIR / "equity_curve.png", dpi=150)
+    chart_path = RESULTS_DIR / "equity_curve.png"
+    fig.savefig(chart_path, dpi=150)
     plt.close(fig)
-    print(f"Equity curve saved to {RESULTS_DIR / 'equity_curve.png'}")
+    print(f"\nEquity curve saved to {chart_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,6 +292,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vol-ma-period", type=int, default=20, help="Volume MA period")
     p.add_argument("--trade-size", type=int, default=100, help="Shares per trade")
     p.add_argument("--full-capital", action="store_true", help="Use full capital position sizing")
+    p.add_argument("--no-volume-filter", action="store_true", help="Disable volume/MA confirmation filter")
     return p.parse_args()
 
 
@@ -204,4 +308,5 @@ if __name__ == "__main__":
         vol_ma_period=args.vol_ma_period,
         trade_size=args.trade_size,
         use_full_capital=args.full_capital,
+        use_volume_filter=not args.no_volume_filter,
     )
