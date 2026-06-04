@@ -36,6 +36,7 @@ class RSRSStrategyConfig(StrategyConfig, frozen=True):
     sell_threshold: float = -0.7
     trade_size: int = 100
     vol_ma_period: int = 20
+    use_full_capital: bool = False
 
 
 class RSRSStrategy(Strategy):
@@ -46,6 +47,8 @@ class RSRSStrategy(Strategy):
         self.bar_type = BarType.from_str(config.bar_type_str)
         self.instrument_id = InstrumentId.from_str(config.instrument_id_str)
         self.trade_size = config.trade_size
+        self.use_full_capital = config.use_full_capital
+        self._current_qty: int = 0
 
         self.buy_threshold = config.buy_threshold
         self.sell_threshold = config.sell_threshold
@@ -88,30 +91,50 @@ class RSRSStrategy(Strategy):
         elif signal < self.sell_threshold and self._is_long:
             self._exit_long()
 
+    def _compute_qty(self, price: float) -> int:
+        if not self.use_full_capital or price <= 0:
+            return self.trade_size
+        account = self.portfolio.account(self.instrument_id.venue)
+        if account is None:
+            return self.trade_size
+        balances = account.balances()
+        from nautilus_trader.model.currencies import USD
+        bal = balances.get(USD)
+        if bal is None:
+            return self.trade_size
+        cash = float(bal.free)
+        return max(int(cash // price), 1)
+
     def _enter_long(self) -> None:
+        last_bar = self.cache.bar(self.bar_type)
+        price = float(last_bar.close) if last_bar else 0.0
+        qty = self._compute_qty(price)
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
-            quantity=Quantity.from_int(self.trade_size),
+            quantity=Quantity.from_int(qty),
         )
         self.submit_order(order)
         self._is_long = True
+        self._current_qty = qty
         self.log.info(
             f"BUY signal={self.rsrs.signal_value:.4f} "
-            f"beta={self.rsrs.beta:.4f} R²={self.rsrs.rsquare:.4f}",
+            f"beta={self.rsrs.beta:.4f} R²={self.rsrs.rsquare:.4f} qty={qty}",
         )
 
     def _exit_long(self) -> None:
+        qty = self._current_qty if self.use_full_capital else self.trade_size
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
-            quantity=Quantity.from_int(self.trade_size),
+            quantity=Quantity.from_int(qty),
         )
         self.submit_order(order)
         self._is_long = False
+        self._current_qty = 0
         self.log.info(
             f"SELL signal={self.rsrs.signal_value:.4f} "
-            f"beta={self.rsrs.beta:.4f} R²={self.rsrs.rsquare:.4f}",
+            f"beta={self.rsrs.beta:.4f} R²={self.rsrs.rsquare:.4f} qty={qty}",
         )
 
     def on_stop(self) -> None:

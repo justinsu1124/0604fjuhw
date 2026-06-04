@@ -98,6 +98,7 @@ def run_backtest(
     sell_threshold: float = -0.7,
     vol_ma_period: int = 20,
     trade_size: int = 100,
+    use_full_capital: bool = False,
 ) -> None:
     print(f"[1/4] Fetching SPY daily data from FMP (from {start}) ...")
     df = fetch_fmp_daily("SPY", start=start, end=end)
@@ -118,6 +119,7 @@ def run_backtest(
         sell_threshold=sell_threshold,
         trade_size=trade_size,
         vol_ma_period=vol_ma_period,
+        use_full_capital=use_full_capital,
     )
     strategy = RSRSStrategy(config=config)
     engine.add_strategy(strategy)
@@ -186,6 +188,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sell-threshold", type=float, default=-0.7)
     p.add_argument("--vol-ma-period", type=int, default=20, help="Volume MA period")
     p.add_argument("--trade-size", type=int, default=100, help="Shares per trade")
+    p.add_argument("--full-capital", action="store_true", help="Use full capital position sizing")
     return p.parse_args()
 
 
@@ -200,4 +203,5 @@ if __name__ == "__main__":
         sell_threshold=args.sell_threshold,
         vol_ma_period=args.vol_ma_period,
         trade_size=args.trade_size,
+        use_full_capital=args.full_capital,
     )
