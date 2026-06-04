@@ -80,8 +80,8 @@ class RSRSStrategy(Strategy):
 
         signal = self.rsrs.signal_value
 
-        vol_ma = np.mean(self._volumes) if len(self._volumes) == self.vol_ma_period else 0.0
-        vol_confirmed = vol > vol_ma
+        vol_ma = np.mean(self._volumes) if len(self._volumes) == self.vol_ma_period else None
+        vol_confirmed = vol_ma is not None and vol > vol_ma
 
         if signal > self.buy_threshold and vol_confirmed and not self._is_long:
             self._enter_long()
