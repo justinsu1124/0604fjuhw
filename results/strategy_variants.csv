@@ -1,0 +1,6 @@
+Strategy,Sharpe,Total,MaxDD,Calmar,Ann_Ret,Ann_Vol
+Long-Only (Baseline),0.949,998.5%,-18.36%,0.628,11.53%,12.15%
+Long/Short,0.858,1260.3%,-28.10%,0.449,12.62%,14.71%
+Bond Rotation (SPY+TLT),0.752,982.3%,-31.32%,0.366,11.45%,15.23%
+VIX Hedge (SPY+30%VXX),0.575,689.8%,-37.95%,0.260,9.87%,17.16%
+Buy & Hold,0.492,560.1%,-56.70%,0.158,8.97%,18.22%
